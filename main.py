@@ -1,4 +1,23 @@
 # main.py
+"""
+File system simulator (Python) — Hierarchical version
+Implements:
+  - Disk of 100 blocks x 512 bytes
+  - Hierarchical directories (block 0 is root)
+  - Data blocks (504 bytes user data + BACK/FRWD)
+  - Commands: CREATE, OPEN, CLOSE, DELETE, READ, WRITE, SEEK
+Usage:
+  - CREATE D /sub
+  - CREATE D /sub/docs
+  - CREATE F /sub/docs/file1
+  - OPEN O /sub/docs/file1
+  - WRITE 0 'Hello World'
+  - CLOSE 0
+  - OPEN I /sub/docs/file1
+  - READ 0 11
+  - CLOSE 0
+  - exit
+"""
 from disk import init_disk
 from fs_ops import create, open_file, close_file, delete, write_cmd, read_cmd, open_stack
 
