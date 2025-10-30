@@ -15,17 +15,21 @@ Usage:
   - CLOSE 0
   - OPEN I /sub/docs/file1
   - READ 0 11
+  - SEEK 0 10
+  - WRITE 0 '!!!'
   - CLOSE 0
   - exit
 """
 from disk import init_disk
-from fs_ops import create, open_file, close_file, delete, write_cmd, read_cmd, open_stack
+from fs_ops import create, open_file, close_file, delete, write_cmd, read_cmd, open_stack, seek
+
 
 def process_line(line):
     tokens = line.strip().split()
     if not tokens:
         return
     cmd = tokens[0].upper()
+
     if cmd == "CREATE" and len(tokens) == 3:
         create(tokens[1].upper(), tokens[2])
     elif cmd == "OPEN" and len(tokens) == 3:
@@ -43,8 +47,10 @@ def process_line(line):
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
         read_cmd(fd, int(tokens[2]))
+    elif cmd == "SEEK" and len(tokens) == 3:
+        seek(int(tokens[1]), int(tokens[2]))
     else:
-        print(f"Unknown command '{line.strip()}'")
+        print(f"Error: Unknown or malformed command '{line.strip()}'")
 
 def main():
     init_disk()

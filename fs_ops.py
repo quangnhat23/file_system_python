@@ -6,6 +6,10 @@ from fs_structs import DirBlock, DataBlock, DirEntry, OpenFile
 open_stack = []
 
 def find_dir_and_name(path):
+    """
+    Given a path, return the parent directory block and the name of the final component.
+    For example, for path "/sub/docs/file1", return the DirBlock for "/sub/docs" and "file1".
+    """
     parts = [p for p in path.strip("/").split("/") if p]
     if not parts:
         return DREAD(0), None  # root
@@ -23,6 +27,10 @@ def find_dir_and_name(path):
     return current_dir, parts[-1]
 
 def create(ftype, path):
+    """
+    Create a file or directory at the specified path.
+    ftype: 'F' for file, 'D' for directory
+    """
     parent_dir, name = find_dir_and_name(path)
     if parent_dir is None or name is None:
         return
@@ -47,6 +55,13 @@ def create(ftype, path):
     DWRITE(0, DREAD(0))
 
 def open_file(mode, path):
+    """
+    Open a file at the specified path in the given mode.
+    mode: 'I' for read, 'O' for write, 'U' for update
+    I is input mode (read and seek only)
+    O is output mode (write only, truncates file)
+    U is update mode (read and write and seek)
+    """
     mode = mode.strip().upper()
     if mode == "I": mode = 'r'
     elif mode == "O": mode = 'w'
@@ -72,6 +87,13 @@ def open_file(mode, path):
     return None
 
 def close_file(fd):
+    """
+    This cmd cause the last opened or created file to be closed. No file named is given
+    as argument, only the file descriptor (FD) is used.
+    fd: file descriptor to close
+
+  """
+    
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD or file already closed.")
         return
@@ -80,6 +102,12 @@ def close_file(fd):
     print(f"File '{closed.path}' with FD {fd} closed.")
 
 def delete(path):
+    """"
+    Delete a file or directory at the specified path.
+    How it work:
+    if the file or directory exists at the specified path, it is removed from its parent directory's entries,
+    and its allocated blocks are freed.
+    """
     parent_dir, name = find_dir_and_name(path)
     if parent_dir is None:
         return
@@ -93,6 +121,10 @@ def delete(path):
     print(f"Error: '{path}' not found.")
 
 def write_cmd(fd, data_str):
+    """
+    This cmd writes data to the file associated with the given file descriptor (FD).
+    fd: file descriptor
+    """
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
@@ -108,6 +140,10 @@ def write_cmd(fd, data_str):
     print(f"Wrote {len(data_bytes)} bytes to FD {fd}.")
 
 def read_cmd(fd, num_bytes):
+    """
+    This cmd reads data from the file associated with the given file descriptor (FD).
+    This cmd only be used when the file is opened in input (I) or update (U) mode and corresponding to close cmd.
+    """
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
@@ -119,3 +155,16 @@ def read_cmd(fd, num_bytes):
     data_to_read = data_block.data[:min(num_bytes, file_object.entry.size)]
     print(f"Read {len(data_to_read)} bytes from FD {fd}: '{data_to_read.decode()}'")
 
+def seek(fd, offset):
+    """
+    This cmd sets the file offset for the file associated with the given file descriptor (FD).
+    """
+    if fd >= len(open_stack) or open_stack[fd] is None:
+        print("Error: Invalid FD.")
+        return
+    file_object = open_stack[fd]
+    if offset < 0 or offset > file_object.entry.size:
+        print("Error: Offset out of bounds.")
+        return
+    file_object.offset = offset
+    print(f"Set offset of FD {fd} to {offset}.")
