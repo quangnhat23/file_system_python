@@ -1,6 +1,6 @@
 # fs_ops.py
 
-from disk import DREAD, DWRITE, allocate_block, free_block
+from disk import DREAD, DWRITE, USER_DATA_SIZE, allocate_block, free_block
 from fs_structs import DirBlock, DataBlock, DirEntry, OpenFile
 
 open_stack = []
@@ -120,11 +120,38 @@ def delete(path):
             return
     print(f"Error: '{path}' not found.")
 
-def write_cmd(fd, data_str):
-    """
-    This cmd writes data to the file associated with the given file descriptor (FD).
-    fd: file descriptor
-    """
+def write_cmd(fd_or_size, data_str=None):
+    # Case 1: called as WRITE <n> 'data' without FD
+    if isinstance(fd_or_size, str) and data_str is None:
+        tokens = fd_or_size.strip().split(maxsplit=1)
+        if len(tokens) < 2:
+            print("Error: Invalid WRITE command.")
+            return
+        n = int(tokens[0])
+        data = tokens[1].strip("'\"")
+        data_bytes = data.encode()
+        if len(data_bytes) < n:
+            data_bytes += b' ' * (n - len(data_bytes))
+
+        # Auto-create default file if none is open
+        if not open_stack or all(f is None for f in open_stack):
+            create('F', '/auto_file')
+            fd = open_file('O', '/auto_file')
+        else:
+            fd = next((i for i, f in enumerate(open_stack) if f is not None), None)
+            if fd is None:
+                fd = open_file('O', '/auto_file')
+
+        file_object = open_stack[fd]
+        data_block = DREAD(file_object.entry.start_block)
+        data_block.data[:n] = data_bytes[:USER_DATA_SIZE]
+        file_object.entry.size = min(n, USER_DATA_SIZE)
+        DWRITE(file_object.entry.start_block, data_block)
+        print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
+        return
+
+    # Case 2: normal WRITE <fd> 'data'
+    fd = fd_or_size
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
@@ -132,12 +159,16 @@ def write_cmd(fd, data_str):
     if file_object.mode not in ('w', 'u'):
         print("Error: File not open in write mode.")
         return
+
+    data_bytes = data_str.encode()
+    if len(data_bytes) < USER_DATA_SIZE:
+        data_bytes += b' ' * (USER_DATA_SIZE - len(data_bytes))
+
     data_block = DREAD(file_object.entry.start_block)
-    data_bytes = data_str.encode()[:len(data_block.data)]
-    file_object.entry.size = len(data_bytes)
-    data_block.data[:len(data_bytes)] = data_bytes
+    data_block.data[:len(data_bytes)] = data_bytes[:USER_DATA_SIZE]
+    file_object.entry.size = min(len(data_bytes), USER_DATA_SIZE)
     DWRITE(file_object.entry.start_block, data_block)
-    print(f"Wrote {len(data_bytes)} bytes to FD {fd}.")
+    print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
 
 def read_cmd(fd, num_bytes):
     """

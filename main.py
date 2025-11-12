@@ -60,10 +60,12 @@ def process_line(line):
         close_file(int(tokens[1]))
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
-    elif cmd == "WRITE" and len(tokens) >= 3:
-        fd = int(tokens[1])
-        data_str = " ".join(tokens[2:]).strip("'\"")
-        write_cmd(fd, data_str)
+    elif cmd == "WRITE":
+        if len(tokens) == 3 and tokens[1].isdigit():
+            # New form: WRITE n 'data'
+            n = int(tokens[1])
+            data_str = " ".join(tokens[2:]).strip("'\"")
+            write_cmd(f"{n} {data_str}")
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
         read_cmd(fd, int(tokens[2]))
