@@ -1,24 +1,44 @@
 # main.py
 """
-File system simulator (Python) — Hierarchical version
-Implements:
-  - Disk of 100 blocks x 512 bytes
-  - Hierarchical directories (block 0 is root)
-  - Data blocks (504 bytes user data + BACK/FRWD)
-  - Commands: CREATE, OPEN, CLOSE, DELETE, READ, WRITE, SEEK
-Usage:
-  - CREATE D /sub
-  - CREATE D /sub/docs
-  - CREATE F /sub/docs/file1
-  - OPEN O /sub/docs/file1
-  - WRITE 0 'Hello World'
-  - CLOSE 0
-  - OPEN I /sub/docs/file1
-  - READ 0 11
-  - SEEK 0 10
-  - WRITE 0 '!!!'
-  - CLOSE 0
-  - exit
+# -----------------------------
+# Basic Setup
+# -----------------------------
+CREATE D /sub             # Create directory "sub"
+CREATE D /sub/docs        # Create directory "docs" inside "sub"
+CREATE F /sub/docs/file1  # Create a new file "file1" under /sub/docs
+
+# -----------------------------
+# File Operations
+# -----------------------------
+OPEN O /sub/docs/file1    # Open file1 for writing (Output mode)
+WRITE 0 'Hello World'     # Write data into file descriptor 0
+CLOSE 0                   # Close the file
+
+OPEN I /sub/docs/file1    # Reopen file1 for reading (Input mode)
+READ 0 11                 # Read 11 bytes from file descriptor 0
+CLOSE 0                   # Close the file
+
+# -----------------------------
+# Update Mode (Read + Write)
+# -----------------------------
+OPEN U /sub/docs/file1    # Open for update (read/write)
+SEEK 0 5                  # Move pointer to offset 5
+WRITE 0 '!!!'             # Overwrite from offset 5
+READ 0 20                 # Read file contents after modification
+CLOSE 0                   # Close the file
+
+# -----------------------------
+# Directory & Deletion
+# -----------------------------
+DELETE /sub/docs/file1    # Delete a file
+DELETE /sub/docs          # Delete directory after its files are deleted
+DELETE /sub               # Delete parent directory
+
+# -----------------------------
+# System Exit
+# -----------------------------
+exit                      # Exit the program and show final disk state
+
 """
 from disk import init_disk
 from fs_ops import create, open_file, close_file, delete, write_cmd, read_cmd, open_stack, seek

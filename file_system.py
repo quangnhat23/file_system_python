@@ -1,21 +1,43 @@
 """
-File system simulator (Python) — Hierarchical version
-Implements:
-  - Disk of 100 blocks x 512 bytes
-  - Hierarchical directories (block 0 is root)
-  - Data blocks (504 bytes user data + BACK/FRWD)
-  - Commands: CREATE, OPEN, CLOSE, DELETE, READ, WRITE, SEEK
-Usage:
-  - CREATE D /sub
-  - CREATE D /sub/docs
-  - CREATE F /sub/docs/file1
-  - OPEN O /sub/docs/file1
-  - WRITE 0 'Hello World'
-  - CLOSE 0
-  - OPEN I /sub/docs/file1
-  - READ 0 11
-  - CLOSE 0
-  - exit
+# -----------------------------
+# Basic Setup
+# -----------------------------
+CREATE D /sub             # Create directory "sub"
+CREATE D /sub/docs        # Create directory "docs" inside "sub"
+CREATE F /sub/docs/file1  # Create a new file "file1" under /sub/docs
+
+# -----------------------------
+# File Operations
+# -----------------------------
+OPEN O /sub/docs/file1    # Open file1 for writing (Output mode)
+WRITE 0 'Hello World'     # Write data into file descriptor 0
+CLOSE 0                   # Close the file
+
+OPEN I /sub/docs/file1    # Reopen file1 for reading (Input mode)
+READ 0 11                 # Read 11 bytes from file descriptor 0
+CLOSE 0                   # Close the file
+
+# -----------------------------
+# Update Mode (Read + Write)
+# -----------------------------
+OPEN U /sub/docs/file1    # Open for update (read/write)
+SEEK 0 5                  # Move pointer to offset 5
+WRITE 0 '!!!'             # Overwrite from offset 5
+READ 0 20                 # Read file contents after modification
+CLOSE 0                   # Close the file
+
+# -----------------------------
+# Directory & Deletion
+# -----------------------------
+DELETE /sub/docs/file1    # Delete a file
+DELETE /sub/docs          # Delete directory after its files are deleted
+DELETE /sub               # Delete parent directory
+
+# -----------------------------
+# System Exit
+# -----------------------------
+exit                      # Exit the program and show final disk state
+
 """
 
 # -----------------------------
@@ -209,7 +231,38 @@ def delete(path):
     print(f"Error: '{path}' not found.")
 
 
-def write_cmd(fd, data_str):
+def write_cmd(fd_or_size, data_str=None):
+    # Case 1: called as WRITE <n> 'data' without FD
+    if isinstance(fd_or_size, str) and data_str is None:
+        tokens = fd_or_size.strip().split(maxsplit=1)
+        if len(tokens) < 2:
+            print("Error: Invalid WRITE command.")
+            return
+        n = int(tokens[0])
+        data = tokens[1].strip("'\"")
+        data_bytes = data.encode()
+        if len(data_bytes) < n:
+            data_bytes += b' ' * (n - len(data_bytes))
+
+        # Auto-create default file if none is open
+        if not open_stack or all(f is None for f in open_stack):
+            create('F', '/auto_file')
+            fd = open_file('O', '/auto_file')
+        else:
+            fd = next((i for i, f in enumerate(open_stack) if f is not None), None)
+            if fd is None:
+                fd = open_file('O', '/auto_file')
+
+        file_object = open_stack[fd]
+        data_block = DREAD(file_object.entry.start_block)
+        data_block.data[:n] = data_bytes[:USER_DATA_SIZE]
+        file_object.entry.size = min(n, USER_DATA_SIZE)
+        DWRITE(file_object.entry.start_block, data_block)
+        print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
+        return
+
+    # Case 2: normal WRITE <fd> 'data'
+    fd = fd_or_size
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
@@ -218,12 +271,16 @@ def write_cmd(fd, data_str):
         print("Error: File not open in write mode.")
         return
 
+    data_bytes = data_str.encode()
+    if len(data_bytes) < USER_DATA_SIZE:
+        data_bytes += b' ' * (USER_DATA_SIZE - len(data_bytes))
+
     data_block = DREAD(file_object.entry.start_block)
-    data_bytes = data_str.encode()[:USER_DATA_SIZE]
-    file_object.entry.size = len(data_bytes)
-    data_block.data[:len(data_bytes)] = data_bytes
+    data_block.data[:len(data_bytes)] = data_bytes[:USER_DATA_SIZE]
+    file_object.entry.size = min(len(data_bytes), USER_DATA_SIZE)
     DWRITE(file_object.entry.start_block, data_block)
-    print(f"Wrote {len(data_bytes)} bytes to FD {fd}.")
+    print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
+
 
 
 def read_cmd(fd, num_bytes):
@@ -270,10 +327,18 @@ def process_line(line):
         close_file(int(tokens[1]))
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
-    elif cmd == "WRITE" and len(tokens) >= 3:
+    elif cmd == "WRITE":
+        if len(tokens) == 3 and tokens[1].isdigit():
+            # New form: WRITE n 'data'
+            n = int(tokens[1])
+            data_str = " ".join(tokens[2:]).strip("'\"")
+            write_cmd(f"{n} {data_str}")
+    elif len(tokens) >= 3:
+        # Original form: WRITE fd 'data'
         fd = int(tokens[1])
         data_str = " ".join(tokens[2:]).strip("'\"")
         write_cmd(fd, data_str)
+
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
         read_cmd(fd, int(tokens[2]))
