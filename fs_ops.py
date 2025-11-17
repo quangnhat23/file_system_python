@@ -159,16 +159,19 @@ def write_cmd(fd_or_size, data_str=None):
     if file_object.mode not in ('w', 'u'):
         print("Error: File not open in write mode.")
         return
-
+    # write at current offset, respect USER_DATA_SIZE
     data_bytes = data_str.encode()
-    if len(data_bytes) < USER_DATA_SIZE:
-        data_bytes += b' ' * (USER_DATA_SIZE - len(data_bytes))
+    start = file_object.offset
+    # cap write to available user data area
+    max_write = max(0, USER_DATA_SIZE - start)
+    write_bytes = data_bytes[:max_write]
 
     data_block = DREAD(file_object.entry.start_block)
-    data_block.data[:len(data_bytes)] = data_bytes[:USER_DATA_SIZE]
-    file_object.entry.size = min(len(data_bytes), USER_DATA_SIZE)
+    data_block.data[start:start+len(write_bytes)] = write_bytes
+    file_object.offset = start + len(write_bytes)
+    file_object.entry.size = max(file_object.entry.size, file_object.offset)
     DWRITE(file_object.entry.start_block, data_block)
-    print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
+    print(f"Wrote {len(write_bytes)} bytes to FD {fd}.")
 
 def read_cmd(fd, num_bytes):
     """
@@ -183,19 +186,56 @@ def read_cmd(fd, num_bytes):
         print("Error: File not open in read mode.")
         return
     data_block = DREAD(file_object.entry.start_block)
-    data_to_read = data_block.data[:min(num_bytes, file_object.entry.size)]
-    print(f"Read {len(data_to_read)} bytes from FD {fd}: '{data_to_read.decode()}'")
+    start = getattr(file_object, 'offset', 0)
+    end = min(start + num_bytes, file_object.entry.size)
+    if start >= end:
+        data_to_read = b''
+    else:
+        data_to_read = data_block.data[start:end]
+    try:
+        decoded = data_to_read.decode()
+    except Exception:
+        decoded = ''
+    print(f"Read {len(data_to_read)} bytes from FD {fd}: '{decoded}'")
+    # advance offset
+    file_object.offset = end
 
-def seek(fd, offset):
+def seek(fd, base, offset=None):
     """
-    This cmd sets the file offset for the file associated with the given file descriptor (FD).
+    seek(fd, offset)  -> short form (SEEK_SET)
+    seek(fd, base, offset) -> long form where base is 0=SEEK_SET,1=SEEK_CUR,2=SEEK_END
     """
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
     file_object = open_stack[fd]
-    if offset < 0 or offset > file_object.entry.size:
+
+    # short form: seek(fd, offset)
+    if offset is None:
+        new_offset = base
+    else:
+        b = base
+        if b == 0:
+            new_offset = offset
+        elif b == 1:
+            new_offset = file_object.offset + offset
+        elif b == 2:
+            new_offset = file_object.entry.size + offset
+        else:
+            print("Error: Invalid base for SEEK.")
+            return
+
+    # bounds
+    if new_offset < 0 or new_offset > USER_DATA_SIZE:
         print("Error: Offset out of bounds.")
         return
-    file_object.offset = offset
-    print(f"Set offset of FD {fd} to {offset}.")
+
+    if new_offset > file_object.entry.size and file_object.mode not in ('w', 'u'):
+        print("Error: Cannot seek beyond EOF in read-only mode.")
+        return
+
+    if new_offset > file_object.entry.size:
+        file_object.entry.size = new_offset
+
+    file_object.offset = new_offset
+    print(f"Set offset of FD {fd} to {new_offset}.")

@@ -61,16 +61,36 @@ def process_line(line):
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
     elif cmd == "WRITE":
-        if len(tokens) == 3 and tokens[1].isdigit():
-            # New form: WRITE n 'data'
-            n = int(tokens[1])
+        # Two forms supported:
+        # 1) WRITE <n> 'data'  (creates/writes a default file)
+        # 2) WRITE <fd> 'data'  (write to an open FD at current offset)
+        if len(tokens) >= 3 and tokens[1].isdigit():
+            fd_or_n = tokens[1]
             data_str = " ".join(tokens[2:]).strip("'\"")
-            write_cmd(f"{n} {data_str}")
+            # detect short CREATE-like form when only two tokens and numeric n
+            # if there are exactly 2 tokens after WRITE and no FD exists, use the special handler
+            if len(tokens) == 3 and not (len(open_stack) and any(f is not None for f in open_stack)):
+                write_cmd(f"{fd_or_n} {data_str}")
+            else:
+                # treat as FD
+                fd = int(fd_or_n)
+                write_cmd(fd, data_str)
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
         read_cmd(fd, int(tokens[2]))
-    elif cmd == "SEEK" and len(tokens) == 3:
-        seek(int(tokens[1]), int(tokens[2]))
+    elif cmd == "SEEK":
+        # support short and long forms
+        if len(tokens) == 3:
+            fd = int(tokens[1])
+            offset = int(tokens[2])
+            seek(fd, offset)
+        elif len(tokens) == 4:
+            fd = int(tokens[1])
+            base = int(tokens[2])
+            offset = int(tokens[3])
+            seek(fd, base, offset)
+        else:
+            print(f"Error: Unknown or malformed command '{line.strip()}'")
     else:
         print(f"Error: Unknown or malformed command '{line.strip()}'")
 

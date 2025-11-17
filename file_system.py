@@ -48,14 +48,14 @@ USER_DATA_SIZE = 504
 DISK_BLOCKS = 100
 
 disk = [None] * DISK_BLOCKS
-open_stack = []
+open_stack = []  # list of OpenFile objects
 
 
 # -----------------------------
 # 2. Data Structures
 # -----------------------------
 class DirEntry:
-    def __init__(self, name, ftype, start_block, size):
+    def __init__(self, name, ftype, start_block, size=0):
         self.name = name
         self.ftype = ftype  # 'F' for file, 'D' for directory
         self.start_block = start_block
@@ -76,7 +76,7 @@ class DataBlock:
 class OpenFile:
     def __init__(self, path, entry, mode):
         self.entry = entry
-        self.mode = mode  # 'r', 'w', or 'u'
+        self.mode = mode  # 'r', 'w', 'u'
         self.offset = 0
         self.path = path
 
@@ -93,7 +93,6 @@ def DWRITE(block_num, data):
 
 
 def init_disk():
-    """Initialize the disk with root directory"""
     root_dir = DirBlock()
     DWRITE(0, root_dir)
     for i in range(1, DISK_BLOCKS):
@@ -117,15 +116,10 @@ def free_block(block_num):
 # 4. Helper: Navigate directories
 # -----------------------------
 def find_dir_and_name(path):
-    """
-    Traverse directories according to path.
-    Returns (parent_dir_block, final_name) or (None, None) if not found.
-    Example: /sub/docs/file1 -> DirBlock for /sub/docs, 'file1'
-    """
     parts = [p for p in path.strip("/").split("/") if p]
     if not parts:
         return DREAD(0), None  # root
-    
+
     current_dir = DREAD(0)
     for part in parts[:-1]:
         found = False
@@ -148,12 +142,12 @@ def create(ftype, path):
     if parent_dir is None or name is None:
         return
 
-    # If exists, delete it
+    # Delete existing file/directory
     for e in parent_dir.entries:
         if e.name == name:
-            print(f"Warning: '{name}' exists. Recreating.")
             free_block(e.start_block)
             parent_dir.entries.remove(e)
+            break
 
     new_block = allocate_block()
     if new_block == -1:
@@ -170,23 +164,20 @@ def create(ftype, path):
         DWRITE(new_block, DataBlock())
         print(f"File '{path}' created.")
 
-    # Save parent directory
-    # We need to find the block number of this parent_dir to re-write it
-    # For simplicity, root_dir = block 0
-    # In full hierarchy we would backtrack, but since DirBlocks are mutable in memory, this suffices
+    # Save root dir
     DWRITE(0, DREAD(0))
 
 
 def open_file(mode, path):
-    mode = mode.strip().upper()
-    if mode == "I":
+    mode = mode.upper()
+    if mode == 'I':
         mode = 'r'
-    elif mode == "O":
+    elif mode == 'O':
         mode = 'w'
-    elif mode == "U":
+    elif mode == 'U':
         mode = 'u'
     else:
-        print("Error: Invalid mode. Use I, O, or U.")
+        print("Error: Invalid mode.")
         return None
 
     parent_dir, name = find_dir_and_name(path)
@@ -210,7 +201,7 @@ def open_file(mode, path):
 
 def close_file(fd):
     if fd >= len(open_stack) or open_stack[fd] is None:
-        print("Error: Invalid FD or file already closed.")
+        print("Error: Invalid FD or already closed.")
         return
     closed = open_stack[fd]
     open_stack[fd] = None
@@ -231,38 +222,7 @@ def delete(path):
     print(f"Error: '{path}' not found.")
 
 
-def write_cmd(fd_or_size, data_str=None):
-    # Case 1: called as WRITE <n> 'data' without FD
-    if isinstance(fd_or_size, str) and data_str is None:
-        tokens = fd_or_size.strip().split(maxsplit=1)
-        if len(tokens) < 2:
-            print("Error: Invalid WRITE command.")
-            return
-        n = int(tokens[0])
-        data = tokens[1].strip("'\"")
-        data_bytes = data.encode()
-        if len(data_bytes) < n:
-            data_bytes += b' ' * (n - len(data_bytes))
-
-        # Auto-create default file if none is open
-        if not open_stack or all(f is None for f in open_stack):
-            create('F', '/auto_file')
-            fd = open_file('O', '/auto_file')
-        else:
-            fd = next((i for i, f in enumerate(open_stack) if f is not None), None)
-            if fd is None:
-                fd = open_file('O', '/auto_file')
-
-        file_object = open_stack[fd]
-        data_block = DREAD(file_object.entry.start_block)
-        data_block.data[:n] = data_bytes[:USER_DATA_SIZE]
-        file_object.entry.size = min(n, USER_DATA_SIZE)
-        DWRITE(file_object.entry.start_block, data_block)
-        print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
-        return
-
-    # Case 2: normal WRITE <fd> 'data'
-    fd = fd_or_size
+def write_cmd(fd, data_str):
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
@@ -272,15 +232,14 @@ def write_cmd(fd_or_size, data_str=None):
         return
 
     data_bytes = data_str.encode()
-    if len(data_bytes) < USER_DATA_SIZE:
-        data_bytes += b' ' * (USER_DATA_SIZE - len(data_bytes))
-
     data_block = DREAD(file_object.entry.start_block)
-    data_block.data[:len(data_bytes)] = data_bytes[:USER_DATA_SIZE]
-    file_object.entry.size = min(len(data_bytes), USER_DATA_SIZE)
+    # write at offset
+    end_pos = min(file_object.offset + len(data_bytes), USER_DATA_SIZE)
+    data_block.data[file_object.offset:end_pos] = data_bytes[:end_pos - file_object.offset]
+    file_object.offset = end_pos
+    file_object.entry.size = max(file_object.entry.size, file_object.offset)
     DWRITE(file_object.entry.start_block, data_block)
-    print(f"Wrote {file_object.entry.size} bytes to FD {fd}.")
-
+    print(f"Wrote {len(data_bytes)} bytes to FD {fd}.")
 
 
 def read_cmd(fd, num_bytes):
@@ -291,21 +250,47 @@ def read_cmd(fd, num_bytes):
     if file_object.mode not in ('r', 'u'):
         print("Error: File not open in read mode.")
         return
+
     data_block = DREAD(file_object.entry.start_block)
-    data_to_read = data_block.data[:min(num_bytes, file_object.entry.size)]
+    end_pos = min(file_object.offset + num_bytes, file_object.entry.size)
+    data_to_read = data_block.data[file_object.offset:end_pos]
     print(f"Read {len(data_to_read)} bytes from FD {fd}: '{data_to_read.decode()}'")
+    file_object.offset = end_pos
 
 
-def seek_cmd(fd, offset):
+def seek_cmd(fd, base, offset):
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
         return
     file_object = open_stack[fd]
-    if offset < 0 or offset > file_object.entry.size:
+
+    # Standard semantics: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END
+    if base == 0:
+        new_offset = offset
+    elif base == 1:
+        new_offset = file_object.offset + offset
+    elif base == 2:
+        new_offset = file_object.entry.size + offset
+    else:
+        print("Error: Invalid base for SEEK.")
+        return
+
+    # bounds: cannot be negative and cannot exceed block data capacity
+    if new_offset < 0 or new_offset > USER_DATA_SIZE:
         print("Error: Offset out of bounds.")
         return
-    file_object.offset = offset
-    print(f"Set offset of FD {fd} to {offset}.")
+
+    # If seeking beyond current file size, only allow for write/update modes
+    if new_offset > file_object.entry.size and file_object.mode not in ('w', 'u'):
+        print("Error: Cannot seek beyond EOF in read-only mode.")
+        return
+
+    # If writable and seek beyond size, extend logical size
+    if new_offset > file_object.entry.size:
+        file_object.entry.size = new_offset
+
+    file_object.offset = new_offset
+    print(f"Set offset of FD {fd} to {new_offset}.")
 
 
 # -----------------------------
@@ -327,23 +312,24 @@ def process_line(line):
         close_file(int(tokens[1]))
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
-    elif cmd == "WRITE":
-        if len(tokens) == 3 and tokens[1].isdigit():
-            # New form: WRITE n 'data'
-            n = int(tokens[1])
-            data_str = " ".join(tokens[2:]).strip("'\"")
-            write_cmd(f"{n} {data_str}")
-    elif len(tokens) >= 3:
-        # Original form: WRITE fd 'data'
+    elif cmd == "WRITE" and len(tokens) >= 3:
         fd = int(tokens[1])
         data_str = " ".join(tokens[2:]).strip("'\"")
         write_cmd(fd, data_str)
-
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
-        read_cmd(fd, int(tokens[2]))
+        num_bytes = int(tokens[2])
+        read_cmd(fd, num_bytes)
     elif cmd == "SEEK" and len(tokens) == 3:
-        seek_cmd(int(tokens[1]), int(tokens[2]))
+        # allow short form: SEEK <fd> <offset> (SEEK_SET)
+        fd = int(tokens[1])
+        offset = int(tokens[2])
+        seek_cmd(fd, 0, offset)
+    elif cmd == "SEEK" and len(tokens) == 4:
+        fd = int(tokens[1])
+        base = int(tokens[2])
+        offset = int(tokens[3])
+        seek_cmd(fd, base, offset)
     else:
         print(f"Error: Unknown or malformed command '{line.strip()}'")
 
@@ -389,4 +375,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
