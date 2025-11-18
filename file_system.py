@@ -199,7 +199,18 @@ def open_file(mode, path):
     return None
 
 
-def close_file(fd):
+def close_file(fd=None):
+    # If no FD provided, close the most recently opened file
+    if fd is None:
+        fd = None
+        for i in range(len(open_stack) - 1, -1, -1):
+            if open_stack[i] is not None:
+                fd = i
+                break
+        if fd is None:
+            print("Error: No open files to close.")
+            return
+
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD or already closed.")
         return
@@ -308,8 +319,8 @@ def process_line(line):
         fd = open_file(tokens[1], tokens[2])
         if fd is not None:
             print(f"File descriptor: {fd}")
-    elif cmd == "CLOSE" and len(tokens) == 2:
-        close_file(int(tokens[1]))
+    elif cmd == "CLOSE" and len(tokens) == 1:
+        close_file()
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
     elif cmd == "WRITE" and len(tokens) >= 3:

@@ -56,8 +56,9 @@ def process_line(line):
         fd = open_file(tokens[1], tokens[2])
         if fd is not None:
             print(f"File descriptor: {fd}")
-    elif cmd == "CLOSE" and len(tokens) == 2:
-        close_file(int(tokens[1]))
+    elif cmd == "CLOSE" and len(tokens) == 1:
+        # Close the most recently opened file (no FD argument required)
+        close_file()
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
     elif cmd == "WRITE":

@@ -29,6 +29,21 @@ def find_dir_and_name(path):
 def create(ftype, path):
     """
     Create a file or directory at the specified path.
+
+    Behavior and logic:
+    - Locate the parent directory using `find_dir_and_name`.
+    - If an entry with the requested name already exists, free its block and remove it
+      (this implements a simple replace-on-create semantics).
+    - Allocate a free block from the simulated disk (`allocate_block`).
+    - Create a `DirEntry` for the new file/directory and append it to the parent
+      directory's entries.
+    - For directories, write an empty `DirBlock` into the allocated block.
+    - For files, write an empty `DataBlock` into the allocated block.
+
+    Notes:
+    - Errors such as missing parent directories or lack of free blocks are reported
+      via printed error messages and the operation is aborted.
+
     ftype: 'F' for file, 'D' for directory
     """
     parent_dir, name = find_dir_and_name(path)
@@ -57,18 +72,27 @@ def create(ftype, path):
 def open_file(mode, path):
     """
     Open a file at the specified path in the given mode.
-    mode: 'I' for read, 'O' for write, 'U' for update
-    I is input mode (read and seek only)
-    O is output mode (write only, truncates file)
-    U is update mode (read and write and seek)
+
+    Behavior and logic:
+    - Normalize the textual mode into an internal mode character ('I' -> 'r',
+      'O' -> 'w', 'U' -> 'u').
+    - Locate the file's `DirEntry` by walking the parent directory entries.
+    - If found, allocate or reuse a slot in `open_stack` and create an `OpenFile`
+      object that tracks the path, entry, mode and current offset.
+    - Returns the file descriptor (index in `open_stack`) on success, otherwise
+      prints an error and returns `None`.
     """
     mode = mode.strip().upper()
-    if mode == "I": mode = 'r'
-    elif mode == "O": mode = 'w'
-    elif mode == "U": mode = 'u'
+    if mode == "I":
+        mode = 'r'
+    elif mode == "O":
+        mode = 'w'
+    elif mode == "U":
+        mode = 'u'
     else:
         print("Error: Invalid mode.")
         return None
+
     parent_dir, name = find_dir_and_name(path)
     if parent_dir is None:
         return None
@@ -86,29 +110,56 @@ def open_file(mode, path):
     print(f"Error: File '{path}' not found.")
     return None
 
-def close_file(fd):
-    """
-    This cmd cause the last opened or created file to be closed. No file named is given
-    as argument, only the file descriptor (FD) is used.
-    fd: file descriptor to close
+def close_file(fd=None):
+        """
+        Close an open file.
 
-  """
-    
-    if fd >= len(open_stack) or open_stack[fd] is None:
-        print("Error: Invalid FD or file already closed.")
-        return
-    closed = open_stack[fd]
-    open_stack[fd] = None
-    print(f"File '{closed.path}' with FD {fd} closed.")
+        If `fd` is provided, close that file descriptor. If `fd` is `None`, close
+        the most recently opened (highest-numbered) open file.
+
+        Behavior and logic:
+        - If `fd` is None, scan `open_stack` from the end to find the last
+            non-None entry and use that FD.
+        - Validate the FD, set the slot to `None` to mark it closed, and print a
+            confirmation message.
+        - If no open files exist, print an error message.
+        """
+        # If no FD given, pick the most recently opened FD
+        if fd is None:
+                fd = None
+                for i in range(len(open_stack) - 1, -1, -1):
+                        if open_stack[i] is not None:
+                                fd = i
+                                break
+                if fd is None:
+                        print("Error: No open files to close.")
+                        return
+
+        if fd >= len(open_stack) or open_stack[fd] is None:
+                print("Error: Invalid FD or file already closed.")
+                return
+        closed = open_stack[fd]
+        open_stack[fd] = None
+        print(f"File '{closed.path}' with FD {fd} closed.")
 
 def delete(path):
-    """"
+    """
     Delete a file or directory at the specified path.
-    How it work:
-    if the file or directory exists at the specified path, it is removed from its parent directory's entries,
-    and its allocated blocks are freed.
+
+    Behavior and logic:
+    - Locate the parent directory and target entry via `find_dir_and_name`.
+    - If found, free the block associated with the entry (`free_block`) and remove
+      the entry from the parent's entries list.
+    - Update the root directory on-disk representation (in this simulation that
+      means writing the in-memory root DirBlock back to block 0).
+    - If the entry is not found, an error message is printed.
+
+    Notes:
+    - This simple implementation does not recursively free blocks for multi-block
+      files or directories. It assumes a single-block file or directory.
     """
     parent_dir, name = find_dir_and_name(path)
+
     if parent_dir is None:
         return
     for i, entry in enumerate(parent_dir.entries):
@@ -175,8 +226,19 @@ def write_cmd(fd_or_size, data_str=None):
 
 def read_cmd(fd, num_bytes):
     """
-    This cmd reads data from the file associated with the given file descriptor (FD).
-    This cmd only be used when the file is opened in input (I) or update (U) mode and corresponding to close cmd.
+    Read up to `num_bytes` starting at the current file offset for the FD.
+
+    Behavior and logic:
+    - Validate the FD and that the file is open for reading (`r` or `u`).
+    - Compute the start position from the `OpenFile.offset` and limit the read
+      to the file's logical size (`entry.size`) and requested `num_bytes`.
+    - Extract the bytes from the DataBlock and attempt to decode to text for
+      printing. Non-decodable bytes will fall back to an empty string for display.
+    - Advance the file offset by the number of bytes actually read.
+
+    Notes:
+    - If the offset is at or beyond EOF, an empty byte string is returned and
+      the offset remains unchanged (or set to EOF).
     """
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
@@ -202,8 +264,25 @@ def read_cmd(fd, num_bytes):
 
 def seek(fd, base, offset=None):
     """
-    seek(fd, offset)  -> short form (SEEK_SET)
-    seek(fd, base, offset) -> long form where base is 0=SEEK_SET,1=SEEK_CUR,2=SEEK_END
+    Set the file offset for an open file descriptor.
+
+    Supported call forms:
+    - `seek(fd, offset)` — short form: set offset absolutely (SEEK_SET)
+    - `seek(fd, base, offset)` — long form where `base` is:
+      0 = SEEK_SET (set offset to `offset`)
+      1 = SEEK_CUR (set offset to current + `offset`)
+      2 = SEEK_END (set offset to file_size + `offset`)
+
+    Behavior and logic:
+    - Validate the FD.
+    - Resolve the requested new offset based on the form and base value.
+    - Enforce bounds: offset cannot be negative and cannot exceed the
+      per-block user-data capacity (`USER_DATA_SIZE`).
+    - Seeking beyond EOF is permitted only when the file is open for write
+      (`w`) or update (`u`); in that case, the file's logical size (`entry.size`)
+      is extended to the new offset.
+    - For read-only mode, seeking beyond EOF is rejected.
+    - Update the OpenFile.offset to the new value and print confirmation.
     """
     if fd >= len(open_stack) or open_stack[fd] is None:
         print("Error: Invalid FD.")
