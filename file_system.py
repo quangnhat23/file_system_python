@@ -163,6 +163,10 @@ def create(ftype, path):
     else:
         DWRITE(new_block, DataBlock())
         print(f"File '{path}' created.")
+        # Automatically open file in Output mode
+        fd = open_file('O', path)
+        if fd is not None:
+            print(f"File descriptor: {fd}")
 
     # Save root dir
     DWRITE(0, DREAD(0))

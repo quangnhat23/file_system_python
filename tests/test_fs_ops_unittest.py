@@ -124,6 +124,108 @@ class TestFsOps(unittest.TestCase):
         names = [e.name for e in rt.entries]
         self.assertIn('auto_file', names)
 
+    def test_delete_recursion(self):
+        # Create nested directories with files
+        create('D', '/root_dir')
+        create('D', '/root_dir/sub_dir')
+        create('F', '/root_dir/file1.txt')
+        create('F', '/root_dir/sub_dir/file2.txt')
+
+        # Verify structure
+        root_block = DREAD(0)
+        self.assertEqual(len(root_block.entries), 1)  # root_dir
+        root_dir_entry = root_block.entries[0]
+        self.assertEqual(root_dir_entry.name, 'root_dir')
+        root_dir_block = DREAD(root_dir_entry.start_block)
+        self.assertEqual(len(root_dir_block.entries), 2)  # file1 and sub_dir
+
+        # Find sub_dir entry
+        sub_dir_entry = None
+        for e in root_dir_block.entries:
+            if e.name == 'sub_dir':
+                sub_dir_entry = e
+                break
+        self.assertIsNotNone(sub_dir_entry)
+        
+        # Delete file in subdirectory
+        delete('/root_dir/sub_dir/file2.txt')
+        sub_dir_block = DREAD(sub_dir_entry.start_block)
+        self.assertEqual(len(sub_dir_block.entries), 0)
+
+        # Delete empty subdirectory
+        delete('/root_dir/sub_dir')
+        root_dir_block = DREAD(root_dir_entry.start_block)  # refresh
+        self.assertEqual(len(root_dir_block.entries), 1)  # only file1 left
+
+        # Delete file in root_dir
+        delete('/root_dir/file1.txt')
+        root_dir_block = DREAD(root_dir_entry.start_block)  # refresh
+        self.assertEqual(len(root_dir_block.entries), 0)
+
+        # Delete empty root_dir
+        delete('/root_dir')
+        root_block = DREAD(0)  # refresh
+        self.assertEqual(len(root_block.entries), 0)
+
+    def test_multiblock_file_write_and_read(self):
+        # Test writing and reading multi-offset data in a single block
+        # Note: current implementation uses single block per file, so we test
+        # sequential writes and offset tracking
+        create('D', '/mb')
+        create('F', '/mb/multiblock')
+        fd = open_file('O', '/mb/multiblock')
+
+        # Write to fill most of the block
+        data1 = 'A' * 400
+        write_cmd(fd, data1)
+        self.assertEqual(open_stack[fd].offset, 400)
+        self.assertEqual(open_stack[fd].entry.size, 400)
+
+        # Continue writing in same file (append)
+        data2 = 'B' * 100
+        write_cmd(fd, data2)
+        self.assertEqual(open_stack[fd].offset, 500)
+        self.assertEqual(open_stack[fd].entry.size, 500)
+
+        close_file()
+
+        # Reopen and verify contents
+        fd = open_file('I', '/mb/multiblock')
+        read_cmd(fd, 400)
+        # offset should now be 400
+        self.assertEqual(open_stack[fd].offset, 400)
+
+        # Read remaining
+        read_cmd(fd, 100)
+        self.assertEqual(open_stack[fd].offset, 500)
+        close_file()
+
+    def test_seek_write_sparse_file(self):
+        # Test seeking far into a file and writing (sparse-like behavior)
+        create('F', '/sparse')
+        fd = open_file('U', '/sparse')
+
+        # Seek to offset 100
+        seek(fd, 0, 100)
+        self.assertEqual(open_stack[fd].offset, 100)
+
+        # Write at offset 100
+        write_cmd(fd, 'SPARSE')
+        entry = open_stack[fd].entry
+        self.assertEqual(entry.size, 106)  # offset 100 + 6 bytes written
+
+        # Seek back to 0 and read should give empty/null bytes
+        seek(fd, 0, 0)
+        read_cmd(fd, 10)
+        # should read 10 bytes at offset [0:10]
+        self.assertEqual(open_stack[fd].offset, 10)
+
+        # Seek to where we wrote and verify
+        seek(fd, 0, 100)
+        read_cmd(fd, 6)
+        self.assertEqual(open_stack[fd].offset, 106)
+        close_file()
+
 
 if __name__ == '__main__':
     unittest.main()

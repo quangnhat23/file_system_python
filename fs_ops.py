@@ -38,11 +38,14 @@ def create(ftype, path):
     - Create a `DirEntry` for the new file/directory and append it to the parent
       directory's entries.
     - For directories, write an empty `DirBlock` into the allocated block.
-    - For files, write an empty `DataBlock` into the allocated block.
+    - For files, write an empty `DataBlock` into the allocated block and automatically
+      open the file in Output ('w') mode.
 
     Notes:
     - Errors such as missing parent directories or lack of free blocks are reported
       via printed error messages and the operation is aborted.
+    - When a file is created, it is automatically opened and the file descriptor
+      is printed.
 
     ftype: 'F' for file, 'D' for directory
     """
@@ -66,6 +69,10 @@ def create(ftype, path):
     else:
         DWRITE(new_block, DataBlock())
         print(f"File '{path}' created.")
+        # Automatically open file in Output mode
+        fd = open_file('O', path)
+        if fd is not None:
+            print(f"File descriptor: {fd}")
     # Save root dir
     DWRITE(0, DREAD(0))
 
@@ -83,12 +90,12 @@ def open_file(mode, path):
       prints an error and returns `None`.
     """
     mode = mode.strip().upper()
-    if mode == "I":
-        mode = 'r'
-    elif mode == "O":
-        mode = 'w'
-    elif mode == "U":
-        mode = 'u'
+    if mode == "I": # Input mode
+        mode = 'r'# read-only
+    elif mode == "O":# Output mode
+        mode = 'w'# write-only
+    elif mode == "U":# update mode
+        mode = 'u'# read-write
     else:
         print("Error: Invalid mode.")
         return None
@@ -127,7 +134,7 @@ def close_file(fd=None):
         # If no FD given, pick the most recently opened FD
         if fd is None:
                 fd = None
-                for i in range(len(open_stack) - 1, -1, -1):
+                for i in range(len(open_stack) - 1, -1, -1): # scan backwards
                         if open_stack[i] is not None:
                                 fd = i
                                 break
