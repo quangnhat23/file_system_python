@@ -69,10 +69,6 @@ def create(ftype, path):
     else:
         DWRITE(new_block, DataBlock())
         print(f"File '{path}' created.")
-        # Automatically open file in Output mode
-        fd = open_file('O', path)
-        if fd is not None:
-            print(f"File descriptor: {fd}")
     # Save root dir
     DWRITE(0, DREAD(0))
 
@@ -105,6 +101,11 @@ def open_file(mode, path):
         return None
     for entry in parent_dir.entries:
         if entry.name == name and entry.ftype == 'F':
+            # If already opened, return existing FD
+            for i, f in enumerate(open_stack):
+                if f is not None and f.path == path:
+                    print(f"File '{path}' already opened with FD {i}.")
+                    return i
             for i, f in enumerate(open_stack):
                 if f is None:
                     open_stack[i] = OpenFile(path, entry, mode)
@@ -268,6 +269,9 @@ def read_cmd(fd, num_bytes):
     print(f"Read {len(data_to_read)} bytes from FD {fd}: '{decoded}'")
     # advance offset
     file_object.offset = end
+    # If fewer bytes were read than requested, indicate EOF
+    if len(data_to_read) < num_bytes:
+        print("EOF reached.")
 
 def seek(fd, base, offset=None):
     """

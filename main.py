@@ -79,6 +79,22 @@ def process_line(line):
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
         read_cmd(fd, int(tokens[2]))
+    elif cmd == "READ" and len(tokens) == 2:
+        # READ <n> -> read from most-recently opened file (no FD)
+        try:
+            num_bytes = int(tokens[1])
+        except ValueError:
+            print(f"Error: Invalid READ argument '{tokens[1]}'")
+            return
+        fd = None
+        for i in range(len(open_stack) - 1, -1, -1):
+            if open_stack[i] is not None:
+                fd = i
+                break
+        if fd is None:
+            print("Error: No open file to read from.")
+        else:
+            read_cmd(fd, num_bytes)
     elif cmd == "SEEK":
         # support short and long forms
         if len(tokens) == 3:

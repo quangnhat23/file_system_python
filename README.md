@@ -21,7 +21,7 @@ The disk is simulated with:
 ✅ SEEK with Unix-standard semantics (SET/CUR/END)  
 ✅ Comprehensive unit tests (10 passing tests)  
 ✅ Support for nested directory deletion  
-✅ Multi-block file offset tracking  
+❗ Multi-block files not implemented (single-block files only)
 ✅ Automatic cleanup and final disk state report  
 
 ---
@@ -103,24 +103,37 @@ CLOSE 0                    # Close specific FD (deprecated, use CLOSE)
 ```
 
 ### **File Pointer Operations (SEEK)**
-SEEK supports two forms:
+SEEK supports multiple forms. The CLI also supports a compact form that applies
+to the most-recently opened file (no FD required).
 
-**Short form (SEEK_SET - absolute positioning):**
+CLI compact form (no FD):
 ```bash
-SEEK 0 10                  # Set offset to 10 in FD 0
+SEEK <base> <offset>   # applies to most-recent open file
+```
+Where `base` is one of:
+- `-1` = beginning of file (set absolute offset)
+- `0`  = current position (SEEK_CUR)
+- `1`  = end of file (SEEK_END)
+
+Examples:
+- `SEEK -1 0`  -> move to beginning of file
+- `SEEK 1 0`   -> move to end of file
+- `SEEK 0 -5`  -> move backwards 5 bytes from current
+
+Legacy / explicit FD forms are also supported:
+
+Short form (explicit FD, absolute set):
+```bash
+SEEK <fd> <offset>        # set absolute offset for FD
 ```
 
-**Long form (with base parameter):**
+Long form (explicit FD with base):
 ```bash
-SEEK 0 0 10                # SEEK_SET: set to offset 10
-SEEK 0 1 5                 # SEEK_CUR: move 5 bytes forward
-SEEK 0 2 -3                # SEEK_END: move 3 bytes back from EOF
+SEEK <fd> <base> <offset> # where base follows the legacy codes 0=SET,1=CUR,2=END
 ```
 
-Base values:
-- `0` = SEEK_SET (absolute offset)
-- `1` = SEEK_CUR (relative to current offset)
-- `2` = SEEK_END (relative to end of file)
+Note: the CLI compact form uses `-1/0/1` for begin/current/end. The explicit FD
+long form accepts the legacy `0/1/2` base codes.
 
 ### **Deletion**
 ```bash
@@ -159,8 +172,8 @@ Command> CREATE F /docs/hello.txt
 File '/docs/hello.txt' created.
 File descriptor: 0
 
-Command> WRITE 0 'Hello World!'
-Wrote 12 bytes to FD 0.
+Command> WRITE 11 'Hello World!'
+Wrote 11 bytes to FD 0.
 
 Command> SEEK 0 0
 Set offset of FD 0 to 0.

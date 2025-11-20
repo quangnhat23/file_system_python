@@ -1,41 +1,43 @@
 """
 # -----------------------------
-# Basic Setup
+# Basic Setup (examples)
 # -----------------------------
+# Notes:
+# - Using the interactive CLI (`file_system.py` or `main.py`) a newly created
+#   file via `CREATE F /path` is automatically opened in Output ('w') mode.
+# - `CLOSE` (no argument) closes the most-recently opened file.
+# - `WRITE` supports two CLI forms:
+#     * `WRITE <n> 'text'` — write up to `n` bytes of `text` into the most-recently
+#       opened file (auto-creates `/auto_file` if none are open).
+#     * `WRITE <fd> 'text'` — write `text` to explicit file descriptor `fd`.
+
+# Example workflow:
 CREATE D /sub             # Create directory "sub"
 CREATE D /sub/docs        # Create directory "docs" inside "sub"
-CREATE F /sub/docs/file1  # Create a new file "file1" under /sub/docs
+CREATE F /sub/docs/file1  # Create a new file "file1" under /sub/docs (auto-opens)
 
-# -----------------------------
 # File Operations
-# -----------------------------
 OPEN O /sub/docs/file1    # Open file1 for writing (Output mode)
-WRITE 0 'Hello World'     # Write data into file descriptor 0
-CLOSE 0                   # Close the file
+WRITE 11 'Hello World'    # Write up to 11 bytes (CLI byte-count form)
+CLOSE                     # Close the most-recently opened file
 
 OPEN I /sub/docs/file1    # Reopen file1 for reading (Input mode)
 READ 0 11                 # Read 11 bytes from file descriptor 0
-CLOSE 0                   # Close the file
+CLOSE                     # Close the file
 
-# -----------------------------
 # Update Mode (Read + Write)
-# -----------------------------
 OPEN U /sub/docs/file1    # Open for update (read/write)
 SEEK 0 5                  # Move pointer to offset 5
-WRITE 0 '!!!'             # Overwrite from offset 5
+WRITE 0 '!!!'             # Overwrite from offset 5 (explicit FD form)
 READ 0 20                 # Read file contents after modification
-CLOSE 0                   # Close the file
+CLOSE                     # Close the file
 
-# -----------------------------
 # Directory & Deletion
-# -----------------------------
 DELETE /sub/docs/file1    # Delete a file
 DELETE /sub/docs          # Delete directory after its files are deleted
 DELETE /sub               # Delete parent directory
 
-# -----------------------------
 # System Exit
-# -----------------------------
 exit                      # Exit the program and show final disk state
 
 """
@@ -190,6 +192,11 @@ def open_file(mode, path):
 
     for entry in parent_dir.entries:
         if entry.name == name and entry.ftype == 'F':
+            # If already opened in the same mode, return existing FD
+            for i, f in enumerate(open_stack):
+                if f is not None and f.path == path and f.mode == mode:
+                    print(f"File '{path}' already opened with FD {i}.")
+                    return i
             for i, f in enumerate(open_stack):
                 if f is None:
                     open_stack[i] = OpenFile(path, entry, mode)
@@ -279,12 +286,24 @@ def seek_cmd(fd, base, offset):
         return
     file_object = open_stack[fd]
 
-    # Standard semantics: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END
-    if base == 0:
+    # New semantics (also accept legacy codes):
+    # Preferred: base in {-1, 0, 1}
+    #   -1 = beginning (SEEK_SET)
+    #    0 = current (SEEK_CUR)
+    #    1 = end     (SEEK_END)
+    # Legacy: base in {0,1,2} maps to (SEEK_SET, SEEK_CUR, SEEK_END)
+    if base == -1:
         new_offset = offset
-    elif base == 1:
+    elif base == 0:
+        # could be either legacy SEEK_SET (0) or new SEEK_CUR (0)
+        # disambiguate by treating explicit legacy 0 with integer offset
+        # If caller intended legacy behavior (set absolute), they'll call with base=-1 normally.
+        # Here we interpret 0 as SEEK_CUR in the new scheme.
         new_offset = file_object.offset + offset
+    elif base == 1:
+        new_offset = file_object.entry.size + offset
     elif base == 2:
+        # legacy mapping: 2 == SEEK_END
         new_offset = file_object.entry.size + offset
     else:
         print("Error: Invalid base for SEEK.")
@@ -328,23 +347,104 @@ def process_line(line):
     elif cmd == "DELETE" and len(tokens) == 2:
         delete(tokens[1])
     elif cmd == "WRITE" and len(tokens) >= 3:
-        fd = int(tokens[1])
-        data_str = " ".join(tokens[2:]).strip("'\"")
-        write_cmd(fd, data_str)
+        # Two WRITE forms supported:
+        # 1) WRITE <n> 'data'  -> write up to <n> bytes of 'data' into the
+        #    most-recently opened file (auto-create '/auto_file' if none)
+        # 2) WRITE <fd> 'data' -> write to explicit file descriptor (legacy)
+        first = tokens[1]
+        raw_data = " ".join(tokens[2:]).strip("'\"")
+        if first.isdigit():
+            n = int(first)
+            # Find most-recently opened FD
+            fd = None
+            for i in range(len(open_stack) - 1, -1, -1):
+                if open_stack[i] is not None:
+                    fd = i
+                    break
+            # If no open file, create an auto file and open it
+            if fd is None:
+                root = DREAD(0)
+                names = set(e.name for e in root.entries)
+                base = 'auto_file'
+                name = base
+                suffix = 1
+                while name in names:
+                    name = f"{base}_{suffix}"
+                    suffix += 1
+                path = f"/{name}"
+                create('F', path)
+                for i in range(len(open_stack) - 1, -1, -1):
+                    if open_stack[i] is not None:
+                        fd = i
+                        break
+            if fd is None:
+                print("Error: No file available to write to.")
+            else:
+                data_bytes = raw_data.encode()
+                to_write = data_bytes[:n]
+                data_str = to_write.decode(errors='ignore')
+                write_cmd(fd, data_str)
+        else:
+            # treat first token as explicit FD if not purely numeric count
+            try:
+                fd = int(first)
+                data_str = raw_data
+                write_cmd(fd, data_str)
+            except ValueError:
+                print(f"Error: Invalid WRITE arguments '{first}'.")
     elif cmd == "READ" and len(tokens) == 3:
         fd = int(tokens[1])
         num_bytes = int(tokens[2])
         read_cmd(fd, num_bytes)
-    elif cmd == "SEEK" and len(tokens) == 3:
-        # allow short form: SEEK <fd> <offset> (SEEK_SET)
-        fd = int(tokens[1])
-        offset = int(tokens[2])
-        seek_cmd(fd, 0, offset)
-    elif cmd == "SEEK" and len(tokens) == 4:
-        fd = int(tokens[1])
-        base = int(tokens[2])
-        offset = int(tokens[3])
-        seek_cmd(fd, base, offset)
+    elif cmd == "READ" and len(tokens) == 2:
+        # READ <n> -> read from most-recently opened file
+        try:
+            num_bytes = int(tokens[1])
+        except ValueError:
+            print(f"Error: Invalid READ argument '{tokens[1]}'")
+            return
+        fd = None
+        for i in range(len(open_stack) - 1, -1, -1):
+            if open_stack[i] is not None:
+                fd = i
+                break
+        if fd is None:
+            print("Error: No open file to read from.")
+        else:
+            read_cmd(fd, num_bytes)
+    elif cmd == "SEEK":
+        # New CLI supports both forms:
+        # 1) SEEK <base> <offset>  (no FD) -> applies to most-recent open file
+        #    where base in {-1,0,1} maps to (beginning, current, end)
+        # 2) SEEK <fd> <offset>    (legacy short form) -> set absolute offset
+        # 3) SEEK <fd> <base> <offset> (legacy long form)
+        if len(tokens) == 3:
+            a = int(tokens[1])
+            b = int(tokens[2])
+            # If first arg is one of the new base codes (-1,0,1), treat as no-FD form
+            if a in (-1, 0, 1):
+                # find most-recently opened FD
+                fd = None
+                for i in range(len(open_stack) - 1, -1, -1):
+                    if open_stack[i] is not None:
+                        fd = i
+                        break
+                if fd is None:
+                    print("Error: No open file to seek.")
+                else:
+                    seek_cmd(fd, a, b)
+            else:
+                # legacy short form: SEEK <fd> <offset> (treat as absolute set)
+                fd = a
+                offset = b
+                seek_cmd(fd, -1, offset)
+        elif len(tokens) == 4:
+            fd = int(tokens[1])
+            base = int(tokens[2])
+            offset = int(tokens[3])
+            seek_cmd(fd, base, offset)
+        else:
+            print(f"Error: Unknown or malformed SEEK '{line.strip()}'")
     else:
         print(f"Error: Unknown or malformed command '{line.strip()}'")
 
