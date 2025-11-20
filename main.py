@@ -5,7 +5,7 @@
 # -----------------------------
 CREATE D /sub             # Create directory "sub"
 CREATE D /sub/docs        # Create directory "docs" inside "sub"
-CREATE F /sub/docs/file1  # Create a new file "file1" under /sub/docs
+CREATE U /sub/docs/file1  # Create a new file "file1" under /sub/docs
 
 # -----------------------------
 # File Operations
@@ -52,10 +52,12 @@ def process_line(line):
 
     if cmd == "CREATE" and len(tokens) == 3:
         ftype = tokens[1].upper()
-        if ftype not in ('F', 'D'):
-            print(f"Error: Invalid type for CREATE: '{tokens[1]}'. Use 'F' or 'D'.")
+        # CLI uses 'U' for file (maps to internal 'F')
+        if ftype not in ('U', 'D'):
+            print(f"Error: Invalid type for CREATE: '{tokens[1]}'. Use 'U' (file) or 'D' (directory).")
         else:
-            create(ftype, tokens[2])
+            internal_type = 'F' if ftype == 'U' else 'D'
+            create(internal_type, tokens[2])
     elif cmd == "OPEN" and len(tokens) == 3:
         mode = tokens[1].upper()
         if mode not in ('I', 'O', 'U'):
