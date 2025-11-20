@@ -41,7 +41,7 @@ exit                      # Exit the program and show final disk state
 
 """
 from disk import init_disk
-from fs_ops import create, open_file, close_file, delete, write_cmd, read_cmd, open_stack, seek
+from fs_ops import create, open_file, close_file, delete, write_cmd, read_cmd, current_open_file, seek, diskstate
 
 
 def process_line(line):
@@ -76,8 +76,8 @@ def process_line(line):
             delete(tokens[1])
     elif cmd == "WRITE":
         # Two forms supported:
-        # 1) WRITE <n> 'data'  (creates/writes a default file)
-        # 2) WRITE <fd> 'data'  (write to an open FD at current offset)
+        # 1) WRITE <n> 'data'  (write to currently open file)
+        # 2) WRITE <fd> 'data'  (write to FD 0 only)
         if len(tokens) >= 3:
             data_str = " ".join(tokens[2:]).strip("'\"")
             if not data_str:
@@ -85,16 +85,25 @@ def process_line(line):
                 return
             if tokens[1].isdigit():
                 fd_or_n = tokens[1]
-                # detect short CREATE-like form when only two tokens and numeric n
-                if len(tokens) == 3 and not (len(open_stack) and any(f is not None for f in open_stack)):
-                    write_cmd(f"{fd_or_n} {data_str}")
+                # Check for currently open file
+                if current_open_file is None:
+                    print("Error: No file is currently open for writing.")
                 else:
                     try:
-                        fd = int(fd_or_n)
+                        n = int(fd_or_n)
                     except ValueError:
-                        print(f"Error: Invalid FD '{fd_or_n}'.")
+                        print(f"Error: Invalid byte count '{fd_or_n}'.")
                         return
-                    write_cmd(fd, data_str)
+                    # Pad or truncate data to exactly n bytes
+                    data_bytes = data_str.encode()
+                    if len(data_bytes) < n:
+                        # Pad with spaces to reach n bytes
+                        data_bytes = data_bytes + b' ' * (n - len(data_bytes))
+                    else:
+                        # Truncate to n bytes
+                        data_bytes = data_bytes[:n]
+                    data_str_encoded = data_bytes.decode(errors='ignore')
+                    write_cmd(0, data_str_encoded, n)
             else:
                 try:
                     fd = int(tokens[1])
@@ -111,21 +120,16 @@ def process_line(line):
             return
         read_cmd(fd, n)
     elif cmd == "READ" and len(tokens) == 2:
-        # READ <n> -> read from most-recently opened file (no FD)
+        # READ <n> -> read from currently open file (no FD)
         try:
             num_bytes = int(tokens[1])
         except ValueError:
             print(f"Error: Invalid READ argument '{tokens[1]}'")
             return
-        fd = None
-        for i in range(len(open_stack) - 1, -1, -1):
-            if open_stack[i] is not None:
-                fd = i
-                break
-        if fd is None:
+        if current_open_file is None:
             print("Error: No open file to read from.")
         else:
-            read_cmd(fd, num_bytes)
+            read_cmd(0, num_bytes)
     elif cmd == "SEEK":
         # support short and long forms
         if len(tokens) == 3:
@@ -161,11 +165,10 @@ def main():
         except EOFError:
             break
     print("\nOpen files:")
-    for i, of in enumerate(open_stack):
-        if of:
-            print(f"FD {i}: {of.path}, mode={of.mode}")
-        else:
-            print(f"FD {i}: Closed")
+    if current_open_file:
+        print(f"FD 0: {current_open_file.path}, mode={current_open_file.mode}")
+    else:
+        print("No files currently open.")
 
 if __name__ == "__main__":
     main()

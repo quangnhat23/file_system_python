@@ -19,6 +19,9 @@ The disk is simulated with:
 ✅ File descriptors and offset tracking  
 ✅ Update mode for combined read/write access  
 ✅ SEEK with Unix-standard semantics (SET/CUR/END)  
+✅ **WRITE command with exact byte padding/truncation**  
+✅ **Disk Full detection on WRITE operations**  
+✅ Multiple simultaneous open files via FD list  
 ✅ Comprehensive unit tests (10 passing tests)  
 ✅ Support for nested directory deletion  
 ❗ Multi-block files not implemented (single-block files only)
@@ -85,7 +88,7 @@ python -m unittest tests.test_fs_ops_unittest -v --coverage
 ### **File & Directory Creation**
 ```bash
 CREATE D /sub              # Create directory
-CREATE F /sub/docs/file1   # Create file (auto-opens in Output mode)
+CREATE U /sub/docs/file1   # Create file (auto-opens in Output mode)
 ```
 When a file is created, it automatically opens in **Output ('w') mode** and returns a file descriptor.
 
@@ -95,12 +98,20 @@ OPEN I /sub/docs/file1     # Open for reading (Input mode)
 OPEN O /sub/docs/file1     # Open for writing (Output mode)
 OPEN U /sub/docs/file1     # Open for read/write (Update mode)
 
-WRITE 0 'Hello World'      # Write to FD 0 at current offset
+WRITE <n> 'data'           # Write exactly n bytes (pad with spaces if < n, truncate if > n)
 READ 0 11                  # Read 11 bytes from FD 0 at current offset
+READ <n>                   # Read n bytes from most recently opened file
 
 CLOSE                      # Close most recently opened file
 CLOSE 0                    # Close specific FD (deprecated, use CLOSE)
 ```
+
+**WRITE Semantics:**
+- `WRITE <n> 'data'` writes exactly `<n>` bytes to the current file
+- If `data` is shorter than `<n>` bytes: padded with spaces to reach exactly `<n>` bytes
+- If `data` is longer than `<n>` bytes: truncated to exactly `<n>` bytes
+- If disk is full and not enough space: returns "Disk Full" error
+- Advances file offset by `<n>` bytes
 
 ### **File Pointer Operations (SEEK)**
 SEEK supports multiple forms. The CLI also supports a compact form that applies
@@ -151,6 +162,21 @@ exit                       # Stop the program
 
 ## 📋 SEEK & READ Semantics
 
+### WRITE Behavior (Exact Byte Count)
+- `WRITE <n> 'data'` writes exactly `<n>` bytes to the current file offset
+- **Padding**: If `data` length < `<n>`, the string is padded with spaces to exactly `<n>` bytes
+- **Truncation**: If `data` length > `<n>`, the string is truncated to exactly `<n>` bytes
+- **Disk Full Detection**: If insufficient disk space for `<n>` bytes, operation fails with "Disk Full" error
+- **Offset Advancement**: File pointer advances by `<n>` bytes after successful write
+- **File Size Extension**: File size updated if write extends beyond current EOF
+
+Examples:
+```bash
+WRITE 5 'Hi'          # Writes "Hi   " (2 chars + 3 spaces = 5 bytes)
+WRITE 3 'Hello'       # Writes "Hel" (truncated to 3 bytes)
+WRITE 11 'Hello World!' # Writes exactly 11 bytes
+```
+
 ### SEEK Behavior
 - **Bounds**: Offsets must be in range [0, USER_DATA_SIZE (504 bytes)]
 - **Beyond EOF in read mode**: Rejected with error message
@@ -168,14 +194,14 @@ exit                       # Stop the program
 Command> CREATE D /docs
 Directory '/docs' created.
 
-Command> CREATE F /docs/hello.txt
+Command> CREATE U /docs/hello.txt
 File '/docs/hello.txt' created.
 File descriptor: 0
 
 Command> WRITE 11 'Hello World!'
 Wrote 11 bytes to FD 0.
 
-Command> SEEK 0 0
+Command> SEEK -1 0
 Set offset of FD 0 to 0.
 
 Command> READ 0 5
@@ -303,7 +329,7 @@ Expected output: **Ran 10 tests in ~0.01s ... OK**
 ### Example 1: Basic Write & Read
 ```bash
 CREATE D /data
-CREATE F /data/test.txt
+CREATE U /data/test.txt
 WRITE 0 'Python File System'
 SEEK 0 0
 READ 0 6
@@ -315,11 +341,11 @@ DELETE /data
 ### Example 2: Multiple Files
 ```bash
 CREATE D /home
-CREATE F /home/file1
+CREATE U /home/file1
 WRITE 0 'File 1'
 CLOSE
 
-CREATE F /home/file2
+CREATE U /home/file2
 WRITE 1 'File 2'
 CLOSE
 
@@ -334,7 +360,7 @@ DELETE /home
 
 ### Example 3: Update Mode (Read & Write)
 ```bash
-CREATE F /data.txt
+CREATE U /data.txt
 WRITE 0 'Hello World'
 CLOSE
 
