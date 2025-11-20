@@ -51,34 +51,63 @@ def process_line(line):
     cmd = tokens[0].upper()
 
     if cmd == "CREATE" and len(tokens) == 3:
-        create(tokens[1].upper(), tokens[2])
+        ftype = tokens[1].upper()
+        if ftype not in ('F', 'D'):
+            print(f"Error: Invalid type for CREATE: '{tokens[1]}'. Use 'F' or 'D'.")
+        else:
+            create(ftype, tokens[2])
     elif cmd == "OPEN" and len(tokens) == 3:
-        fd = open_file(tokens[1], tokens[2])
-        if fd is not None:
-            print(f"File descriptor: {fd}")
+        mode = tokens[1].upper()
+        if mode not in ('I', 'O', 'U'):
+            print(f"Error: Invalid mode for OPEN: '{tokens[1]}'. Use I, O, or U.")
+        else:
+            fd = open_file(mode, tokens[2])
+            if fd is not None:
+                print(f"File descriptor: {fd}")
     elif cmd == "CLOSE" and len(tokens) == 1:
         # Close the most recently opened file (no FD argument required)
         close_file()
     elif cmd == "DELETE" and len(tokens) == 2:
-        delete(tokens[1])
+        if not tokens[1].startswith('/'):
+            print(f"Error: Invalid path '{tokens[1]}'. Paths must start with '/'.")
+        else:
+            delete(tokens[1])
     elif cmd == "WRITE":
         # Two forms supported:
         # 1) WRITE <n> 'data'  (creates/writes a default file)
         # 2) WRITE <fd> 'data'  (write to an open FD at current offset)
-        if len(tokens) >= 3 and tokens[1].isdigit():
-            fd_or_n = tokens[1]
+        if len(tokens) >= 3:
             data_str = " ".join(tokens[2:]).strip("'\"")
-            # detect short CREATE-like form when only two tokens and numeric n
-            # if there are exactly 2 tokens after WRITE and no FD exists, use the special handler
-            if len(tokens) == 3 and not (len(open_stack) and any(f is not None for f in open_stack)):
-                write_cmd(f"{fd_or_n} {data_str}")
+            if not data_str:
+                print("Error: No data provided for WRITE.")
+                return
+            if tokens[1].isdigit():
+                fd_or_n = tokens[1]
+                # detect short CREATE-like form when only two tokens and numeric n
+                if len(tokens) == 3 and not (len(open_stack) and any(f is not None for f in open_stack)):
+                    write_cmd(f"{fd_or_n} {data_str}")
+                else:
+                    try:
+                        fd = int(fd_or_n)
+                    except ValueError:
+                        print(f"Error: Invalid FD '{fd_or_n}'.")
+                        return
+                    write_cmd(fd, data_str)
             else:
-                # treat as FD
-                fd = int(fd_or_n)
+                try:
+                    fd = int(tokens[1])
+                except ValueError:
+                    print(f"Error: Invalid WRITE arguments '{tokens[1]}'. FD expected.")
+                    return
                 write_cmd(fd, data_str)
     elif cmd == "READ" and len(tokens) == 3:
-        fd = int(tokens[1])
-        read_cmd(fd, int(tokens[2]))
+        try:
+            fd = int(tokens[1])
+            n = int(tokens[2])
+        except ValueError:
+            print("Error: READ expects numeric FD and byte count.")
+            return
+        read_cmd(fd, n)
     elif cmd == "READ" and len(tokens) == 2:
         # READ <n> -> read from most-recently opened file (no FD)
         try:
@@ -98,13 +127,21 @@ def process_line(line):
     elif cmd == "SEEK":
         # support short and long forms
         if len(tokens) == 3:
-            fd = int(tokens[1])
-            offset = int(tokens[2])
+            try:
+                fd = int(tokens[1])
+                offset = int(tokens[2])
+            except ValueError:
+                print("Error: SEEK expects integer FD and offset.")
+                return
             seek(fd, offset)
         elif len(tokens) == 4:
-            fd = int(tokens[1])
-            base = int(tokens[2])
-            offset = int(tokens[3])
+            try:
+                fd = int(tokens[1])
+                base = int(tokens[2])
+                offset = int(tokens[3])
+            except ValueError:
+                print("Error: SEEK expects integer FD, base, and offset.")
+                return
             seek(fd, base, offset)
         else:
             print(f"Error: Unknown or malformed command '{line.strip()}'")

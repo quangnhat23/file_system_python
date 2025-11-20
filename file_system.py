@@ -337,15 +337,26 @@ def process_line(line):
     cmd = tokens[0].upper()
 
     if cmd == "CREATE" and len(tokens) == 3:
-        create(tokens[1].upper(), tokens[2])
+        ftype = tokens[1].upper()
+        if ftype not in ('F', 'D'):
+            print(f"Error: Invalid type for CREATE: '{tokens[1]}'. Use 'F' or 'D'.")
+        else:
+            create(ftype, tokens[2])
     elif cmd == "OPEN" and len(tokens) == 3:
-        fd = open_file(tokens[1], tokens[2])
-        if fd is not None:
-            print(f"File descriptor: {fd}")
+        mode = tokens[1].upper()
+        if mode not in ('I', 'O', 'U'):
+            print(f"Error: Invalid mode for OPEN: '{tokens[1]}'. Use I, O, or U.")
+        else:
+            fd = open_file(mode, tokens[2])
+            if fd is not None:
+                print(f"File descriptor: {fd}")
     elif cmd == "CLOSE" and len(tokens) == 1:
         close_file()
     elif cmd == "DELETE" and len(tokens) == 2:
-        delete(tokens[1])
+        if not tokens[1].startswith('/'):
+            print(f"Error: Invalid path '{tokens[1]}'. Paths must start with '/'.")
+        else:
+            delete(tokens[1])
     elif cmd == "WRITE" and len(tokens) >= 3:
         # Two WRITE forms supported:
         # 1) WRITE <n> 'data'  -> write up to <n> bytes of 'data' into the
@@ -353,8 +364,15 @@ def process_line(line):
         # 2) WRITE <fd> 'data' -> write to explicit file descriptor (legacy)
         first = tokens[1]
         raw_data = " ".join(tokens[2:]).strip("'\"")
+        if not raw_data:
+            print("Error: No data provided for WRITE.")
+            return
         if first.isdigit():
-            n = int(first)
+            try:
+                n = int(first)
+            except ValueError:
+                print(f"Error: Invalid byte count '{first}'.")
+                return
             # Find most-recently opened FD
             fd = None
             for i in range(len(open_stack) - 1, -1, -1):
@@ -388,13 +406,18 @@ def process_line(line):
             # treat first token as explicit FD if not purely numeric count
             try:
                 fd = int(first)
-                data_str = raw_data
-                write_cmd(fd, data_str)
             except ValueError:
-                print(f"Error: Invalid WRITE arguments '{first}'.")
+                print(f"Error: Invalid WRITE arguments '{first}'. FD or byte count expected.")
+                return
+            data_str = raw_data
+            write_cmd(fd, data_str)
     elif cmd == "READ" and len(tokens) == 3:
-        fd = int(tokens[1])
-        num_bytes = int(tokens[2])
+        try:
+            fd = int(tokens[1])
+            num_bytes = int(tokens[2])
+        except ValueError:
+            print("Error: READ expects numeric FD and byte count.")
+            return
         read_cmd(fd, num_bytes)
     elif cmd == "READ" and len(tokens) == 2:
         # READ <n> -> read from most-recently opened file
@@ -419,8 +442,12 @@ def process_line(line):
         # 2) SEEK <fd> <offset>    (legacy short form) -> set absolute offset
         # 3) SEEK <fd> <base> <offset> (legacy long form)
         if len(tokens) == 3:
-            a = int(tokens[1])
-            b = int(tokens[2])
+            try:
+                a = int(tokens[1])
+                b = int(tokens[2])
+            except ValueError:
+                print("Error: SEEK arguments must be integers.")
+                return
             # If first arg is one of the new base codes (-1,0,1), treat as no-FD form
             if a in (-1, 0, 1):
                 # find most-recently opened FD
@@ -439,9 +466,13 @@ def process_line(line):
                 offset = b
                 seek_cmd(fd, -1, offset)
         elif len(tokens) == 4:
-            fd = int(tokens[1])
-            base = int(tokens[2])
-            offset = int(tokens[3])
+            try:
+                fd = int(tokens[1])
+                base = int(tokens[2])
+                offset = int(tokens[3])
+            except ValueError:
+                print("Error: SEEK arguments must be integers.")
+                return
             seek_cmd(fd, base, offset)
         else:
             print(f"Error: Unknown or malformed SEEK '{line.strip()}'")
